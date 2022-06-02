@@ -11,6 +11,10 @@ import random
 from IPython import display
 from matplotlib import pyplot as plt
 from typing import Dict, List, Optional, Sequence, Tuple
+from preprocessing import midi_to_notes, notes_to_midi
+from training import get_model
+
+model = get_model('model/note_rnn.h5', 0.001)
 
 def predict_next_note(
     notes: np.ndarray, 
@@ -23,7 +27,7 @@ def predict_next_note(
     # Add batch dimension
     inputs = tf.expand_dims(notes, 0)
 
-    predictions = model.predict(inputs)
+    predictions = keras_model.predict(inputs)
     pitch_logits = predictions['pitch']
     step = predictions['step']
     duration = predictions['duration']
@@ -43,8 +47,15 @@ def predict_next_note(
 temperature = 2.0
 num_predictions = 120
 
-raw_notes = midi_to_notes(filenames[random.randint(0, 45128)])
+data_dir = pathlib.Path('dataset/')
 
+filenames = glob.glob(str(data_dir/'*.mid*'))
+seq_length = 25
+vocab_size = 128
+file = filenames[random.randint(0, 45128)]
+print(file)
+raw_notes = midi_to_notes('dataset/0a0ce238fb8c672549f77f3b692ebf32.mid')
+key_order = ['pitch', 'step', 'duration']
 sample_notes = np.stack([raw_notes[key] for key in key_order], axis=1)
 
 # The initial sequence of notes; pitch is normalized similar to training
@@ -52,6 +63,7 @@ sample_notes = np.stack([raw_notes[key] for key in key_order], axis=1)
 input_notes = (
     sample_notes[:seq_length] / np.array([vocab_size, 1, 1]))
 
+print(input_notes)
 generated_notes = []
 prev_start = 0
 for _ in range(num_predictions):
@@ -60,6 +72,10 @@ for _ in range(num_predictions):
     end = start + duration
     input_note = (pitch, step, duration)
     generated_notes.append((*input_note, start, end))
+    print('note: ')
+    print(input_note)
+    print(start)
+    print(end)
     input_notes = np.delete(input_notes, 0, axis=0)
     input_notes = np.append(input_notes, np.expand_dims(input_note, 0), axis=0)
     prev_start = start
@@ -69,4 +85,4 @@ generated_notes = pd.DataFrame(
 
 out_file = 'output.midi'
 out_pm = notes_to_midi(
-    generated_notes, out_file=out_file, instrument_name=instrument_name)
+    generated_notes, out_file=out_file, instrument_name='Electric Guitar (Clean)')
