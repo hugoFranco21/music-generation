@@ -12,13 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Defines the main RL Tuner class.
-RL Tuner is a Deep Q Network (DQN) with augmented reward to create melodies
-by using reinforcement learning to fine-tune a trained Note RNN according
-to some music theory rewards.
-Also implements two alternatives to Q learning: Psi and G learning. The
-algorithm can be switched using the 'algorithm' hyperparameter.
-For more information, please consult the README.md file in this directory.
+"""Defines the main Tuner class.
 """
 
 from __future__ import absolute_import
@@ -48,7 +42,7 @@ NO_EVENT = 1
 # to this length.
 TRAIN_SEQUENCE_LENGTH = 192
 
-class RLTuner(object):
+class Tuner(object):
     """Implements a recurrent DQN designed to produce melody sequences."""
 
     def __init__(self, output_dir,
@@ -294,9 +288,6 @@ class RLTuner(object):
                 q1 = self.session.run(q_vars[0])
 
                 if np.sum((q1 - reward1)**2) == 0.0:
-                    # TODO(natashamjaques): Remove print statement once tf.logging outputs
-                    # to Jupyter notebooks (once the following issue is resolved:
-                    # https://github.com/tensorflow/tensorflow/issues/3047)
                     print('\nSuccessfully initialized internal nets from checkpoint!')
                     tf.logging.info('\nSuccessfully initialized internal nets from '
                                     'checkpoint!')
