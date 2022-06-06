@@ -4,7 +4,8 @@ from collections import deque
 import tensorflow as tf
 import glob
 import pathlib
-from training import get_model
+from training import get_model, create_sequences
+from preprocessing import midi_to_notes, get_notes_from_files
 
 import random
 
@@ -87,12 +88,14 @@ class DoubleDeepQNetwork():
     def __init__(self, states, actions, alpha, gamma, epsilon,epsilon_min, epsilon_decay):
         self.nS = states
         self.nA = actions
-        self.memory = deque([], maxlen=2500)
+        self.memory = deque([], maxlen=10000)
         self.alpha = alpha
         self.gamma = gamma
         self.composition = []
         self.beat = 0
-        self.input = []
+        self.num_times_stored_called = 0
+        self.minibatch_size = 32
+        self.input = self.prime_models(self)
         #Explore/Exploit
         self.epsilon = epsilon
         self.epsilon_min = epsilon_min
@@ -118,7 +121,7 @@ class DoubleDeepQNetwork():
 
     def get_rewards(self, action):
         reward = 0
-        reward += self.reward_key(self,action,)
+        reward += self.reward_key(self,action)
         reward += self.penalize_repeating(self,action,-100.0)
         reward_rock = self.reward_twelve_bar(self,action)
         if reward_rock < 0:
@@ -131,7 +134,8 @@ class DoubleDeepQNetwork():
         return reward
 
     def reward_key(self, action, amount=-1):
-        if not (action[0] - self.key) in SCALE:
+        reward = 10
+        if not ((action[0] - self.key) % 12) in SCALE:
             reward = amount
         return reward
 
@@ -190,6 +194,8 @@ class DoubleDeepQNetwork():
     def penalize_invalid_duration(self, action):
         if action[2] < 0.1:
             return -50.0
+        if action[2] > 10:
+            return -100
         if action[2] > 3.5:
             return -50.0
         return 1.0
@@ -197,21 +203,23 @@ class DoubleDeepQNetwork():
     def penalize_invalid_step(self, action):
         if action[1] < 0.1:
             return -50.0
+        if action[1] > 10:
+            return -100
         if action[1] > 2.5:
             return -50.0
         return 1.0
 
-    def prime_models():
+    def prime_models(self):
         data_dir = pathlib.Path('dataset/')
 
         filenames = glob.glob(str(data_dir/'*.mid*'))
-        seq_length = 25
+        seq_length = 26
         vocab_size = 128
         file = filenames[random.randint(0, 45128)]
-        print(file)
-        raw_notes = midi_to_notes('dataset/0a0ce238fb8c672549f77f3b692ebf32.mid')
-        key_order = ['pitch', 'step', 'duration']
-        sample_notes = np.stack([raw_notes[key] for key in key_order], axis=1)
+        notes, n = get_notes_from_files([file])
+        seq = create_sequences(notes, seq_length, vocab_size)
+        self.key = seq[-1][0]
+        return seq[:25]
 
     def update_target_from_model(self):
         #Update the target model from the base model
@@ -231,13 +239,19 @@ class DoubleDeepQNetwork():
         self.input = np.append(self.input, np.expand_dims(input_note, 0), axis=0)
         return [pitch, step, duration]
 
-    def store(self, state, action, reward, nstate, done):
+    def store(self, observation, state, action, reward, newobservation, newstate,
+            new_reward_state):
         #Store the experience in memory
-        self.memory.append( (state, action, reward, nstate, done) )
+        self.experience.append((observation, state, action, reward,
+                            newobservation, newstate, new_reward_state))
+        self.num_times_store_called += 1
 
     def experience_replay(self, batch_size):
         #Execute the experience replay
-        minibatch = random.sample( self.memory, batch_size ) #Randomly sample from memory
+        if self.num_times_train_called % 5 == 0:
+            if len(self.composition) < self.minibatch_size:
+                return
+        minibatch = random.sample( self.memory, self.minibatch_size ) #Randomly sample from memory
 
         #Convert to numpy for speed by vectorization
         x = []
