@@ -22,17 +22,15 @@ from __future__ import print_function
 import collections
 import os
 import random
-import urllib
 
-from magenta.models.rl_tuner import note_rnn_loader
-from magenta.models.rl_tuner import rl_tuner_eval_metrics
-from magenta.models.rl_tuner import rl_tuner_ops
+import helpers
+
 import matplotlib.pyplot as plt
-from note_seq import melodies_lib as mlib
-from note_seq import midi_io
+
 import numpy as np
 import scipy.special
 import tensorflow as tf
+import metrics
 
 # Note values of special actions.
 NOTE_OFF = 0
@@ -64,12 +62,12 @@ class Tuner(object):
 
         # Other music related settings.
         num_notes_in_melody=32,
-        input_size=rl_tuner_ops.NUM_CLASSES,
-        num_actions=rl_tuner_ops.NUM_CLASSES,
+        input_size=128,
+        num_actions=128,
         midi_primer=None,
 
         # Logistics.
-        save_name='rl_tuner.ckpt',
+        save_name='tuner.ckpt',
         output_every_nth=1000,
         training_file_list=None,
         summary_writer=None,
@@ -152,26 +150,17 @@ class Tuner(object):
                 tf.logging.fatal('A midi primer file is required when using'
                                 'the single_midi priming mode.')
 
-            if note_rnn_checkpoint_dir is None or not note_rnn_checkpoint_dir:
-                print('Retrieving checkpoint of Note RNN from Magenta download server.')
-                urllib.request.urlretrieve(
-                    'http://download.magenta.tensorflow.org/models/'
-                    'rl_tuner_note_rnn.ckpt', 'note_rnn.ckpt')
-                self.note_rnn_checkpoint_dir = os.getcwd()
-                self.note_rnn_checkpoint_file = os.path.join(os.getcwd(),
-                                                        'note_rnn.ckpt')
-
             if self.note_rnn_hparams is None:
                 if self.note_rnn_type == 'basic_rnn':
-                    self.note_rnn_hparams = rl_tuner_ops.basic_rnn_hparams()
+                    self.note_rnn_hparams = helpers.basic_rnn_hparams()
                 else:
-                    self.note_rnn_hparams = rl_tuner_ops.default_hparams()
+                    self.note_rnn_hparams = helpers.default_hparams()
 
             if self.algorithm == 'g' or self.algorithm == 'pure_rl':
                 self.reward_mode = 'music_theory_only'
 
             if dqn_hparams is None:
-                self.dqn_hparams = rl_tuner_ops.default_dqn_hparams()
+                self.dqn_hparams = helpers.default_dqn_hparams()
             else:
                 self.dqn_hparams = dqn_hparams
             self.discount_rate = tf.constant(self.dqn_hparams.discount_rate)
@@ -346,7 +335,7 @@ class Tuner(object):
                 (1, model.cell.state_size))
             priming_note = self.priming_notes[priming_idx]
             next_obs = np.array(
-                rl_tuner_ops.make_onehot([priming_note], self.num_actions)).flatten()
+                helpers.make_onehot([priming_note], self.num_actions)).flatten()
             tf.logging.debug(
                 'Feeding priming state for midi file %s and corresponding note %s',
                 priming_idx, priming_note)
@@ -367,7 +356,7 @@ class Tuner(object):
             random note
         """
         note_idx = np.random.randint(0, self.num_actions - 1)
-        return np.array(rl_tuner_ops.make_onehot([note_idx],
+        return np.array(helpers.make_onehot([note_idx],
                                                 self.num_actions)).flatten()
 
     def reset_composition(self):
@@ -559,7 +548,7 @@ class Tuner(object):
                 print('\t\tNote RNN reward:', self.note_rnn_reward_last_n)
 
                 if self.exploration_mode == 'egreedy':
-                    exploration_p = rl_tuner_ops.linear_annealing(
+                    exploration_p = helpers.linear_annealing(
                         self.actions_executed_so_far, exploration_period, 1.0,
                         self.dqn_hparams.random_action_probability)
                     tf.logging.info('\tExploration probability is %s', exploration_p)
@@ -603,7 +592,7 @@ class Tuner(object):
 
         if self.exploration_mode == 'egreedy':
             # Compute the exploration probability.
-            exploration_p = rl_tuner_ops.linear_annealing(
+            exploration_p = helpers.linear_annealing(
                 self.actions_executed_so_far, exploration_period, 1.0,
                 self.dqn_hparams.random_action_probability)
         elif self.exploration_mode == 'boltzmann':
@@ -638,9 +627,9 @@ class Tuner(object):
             if not sample_next_obs:
                 return action, action, reward_scores
             else:
-                obs_note = rl_tuner_ops.sample_softmax(action_softmax)
+                obs_note = helpers.sample_softmax(action_softmax)
                 next_obs = np.array(
-                rl_tuner_ops.make_onehot([obs_note], self.num_actions)).flatten()
+                helpers.make_onehot([obs_note], self.num_actions)).flatten()
             return action, next_obs, reward_scores
 
     def store(self, observation, state, action, reward, newobservation, newstate,
@@ -993,7 +982,7 @@ class Tuner(object):
         """
 
         if scale is None:
-            scale = rl_tuner_ops.C_MAJOR_SCALE
+            scale = helpers.C_MAJOR_SCALE
 
         obs = np.argmax(obs)
         action = np.argmax(action)
@@ -1027,7 +1016,7 @@ class Tuner(object):
             Float reward value.
         """
         if key is None:
-            key = rl_tuner_ops.C_MAJOR_KEY
+            key = helpers.C_MAJOR_KEY
 
         reward = 0
 
@@ -1052,7 +1041,7 @@ class Tuner(object):
             Float reward value.
         """
         if key is None:
-            key = rl_tuner_ops.C_MAJOR_KEY
+            key = helpers.C_MAJOR_KEY
 
         reward = 0
 
@@ -1062,7 +1051,7 @@ class Tuner(object):
 
         return reward
 
-    def reward_tonic(self, action, tonic_note=rl_tuner_ops.C_MAJOR_TONIC,
+    def reward_tonic(self, action, tonic_note = 60,
                     reward_amount=3.0):
         """Rewards for playing the tonic note at the right times.
         Rewards for playing the tonic as the first note of the first bar, and the
@@ -1159,132 +1148,6 @@ class Tuner(object):
         else:
             return 0.0
 
-    def reward_penalize_autocorrelation(self,
-                                        action,
-                                        penalty_weight=3.0):
-        """Reduces the previous reward if the composition is highly autocorrelated.
-        Penalizes the model for creating a composition that is highly correlated
-        with itself at lags of 1, 2, and 3 beats previous. This is meant to
-        encourage variety in compositions.
-        Args:
-            action: One-hot encoding of the chosen action.
-            penalty_weight: The default weight which will be multiplied by the sum
-            of the autocorrelation coefficients, and subtracted from prev_reward.
-        Returns:
-            Float reward value.
-        """
-        composition = self.composition + [np.argmax(action)]
-        lags = [1, 2, 3]
-        sum_penalty = 0
-        for lag in lags:
-            coeff = rl_tuner_ops.autocorrelate(composition, lag=lag)
-            if not np.isnan(coeff):
-                if np.abs(coeff) > 0.15:
-                    sum_penalty += np.abs(coeff) * penalty_weight
-        return -sum_penalty
-
-    def detect_last_motif(self, composition=None, bar_length=8):
-        """Detects if a motif was just played and if so, returns it.
-        A motif should contain at least three distinct notes that are not note_on
-        or note_off, and occur within the course of one bar.
-        Args:
-            composition: The composition in which the function will look for a
-            recent motif. Defaults to the model's composition.
-            bar_length: The number of notes in one bar.
-        Returns:
-            None if there is no motif, otherwise the motif in the same format as the
-            composition.
-        """
-        if composition is None:
-            composition = self.composition
-
-        if len(composition) < bar_length:
-            return None, 0
-
-        last_bar = composition[-bar_length:]
-
-        actual_notes = [a for a in last_bar if a not in (NO_EVENT, NOTE_OFF)]
-        num_unique_notes = len(set(actual_notes))
-        if num_unique_notes >= 3:
-            return last_bar, num_unique_notes
-        else:
-            return None, num_unique_notes
-
-    def reward_motif(self, action, reward_amount=3.0):
-        """Rewards the model for playing any motif.
-        Motif must have at least three distinct notes in the course of one bar.
-        There is a bonus for playing more complex motifs; that is, ones that involve
-        a greater number of notes.
-        Args:
-            action: One-hot encoding of the chosen action.
-            reward_amount: The amount that will be returned if the last note belongs
-            to a motif.
-        Returns:
-            Float reward value.
-        """
-
-        composition = self.composition + [np.argmax(action)]
-        motif, num_notes_in_motif = self.detect_last_motif(composition=composition)
-        if motif is not None:
-            motif_complexity_bonus = max((num_notes_in_motif - 3)*.3, 0)
-            return reward_amount + motif_complexity_bonus
-        else:
-            return 0.0
-
-    def detect_repeated_motif(self, action, bar_length=8):
-        """Detects whether the last motif played repeats an earlier motif played.
-        Args:
-            action: One-hot encoding of the chosen action.
-            bar_length: The number of beats in one bar. This determines how many beats
-            the model has in which to play the motif.
-        Returns:
-            True if the note just played belongs to a motif that is repeated. False
-            otherwise.
-        """
-        composition = self.composition + [np.argmax(action)]
-        if len(composition) < bar_length:
-            return False, None
-
-        motif, _ = self.detect_last_motif(
-            composition=composition, bar_length=bar_length)
-        if motif is None:
-            return False, None
-
-        prev_composition = self.composition[:-(bar_length-1)]
-
-        # Check if the motif is in the previous composition.
-        for i in range(len(prev_composition) - len(motif) + 1):
-            for j in range(len(motif)):
-                if prev_composition[i + j] != motif[j]:
-                    break
-            else:
-                return True, motif
-        return False, None
-
-    def reward_repeated_motif(self,
-                                action,
-                                bar_length=8,
-                                reward_amount=4.0):
-        """Adds a big bonus to previous reward if the model plays a repeated motif.
-        Checks if the model has just played a motif that repeats an ealier motif in
-        the composition.
-        There is also a bonus for repeating more complex motifs.
-        Args:
-            action: One-hot encoding of the chosen action.
-            bar_length: The number of notes in one bar.
-            reward_amount: The amount that will be added to the reward if the last
-            note belongs to a repeated motif.
-        Returns:
-            Float reward value.
-        """
-        is_repeated, motif = self.detect_repeated_motif(action, bar_length)
-        if is_repeated:
-            actual_notes = [a for a in motif if a not in (NO_EVENT, NOTE_OFF)]
-            num_notes_in_motif = len(set(actual_notes))
-            motif_complexity_bonus = max(num_notes_in_motif - 3, 0)
-            return reward_amount + motif_complexity_bonus
-        else:
-            return 0.0
 
     def detect_sequential_interval(self, action, key=None):
         """Finds the melodic interval between the action and the last note played.
@@ -1305,7 +1168,7 @@ class Tuner(object):
 
         c_major = False
         if key is None:
-            key = rl_tuner_ops.C_MAJOR_KEY
+            key = helpers.C_MAJOR_KEY
             c_notes = [2, 14, 26]
             g_notes = [9, 21, 33]
             e_notes = [6, 18, 30]
@@ -1327,25 +1190,25 @@ class Tuner(object):
         # get rid of non-notes in action_note
         if action_note == NO_EVENT:
             if prev_note in tonic_notes or prev_note in fifth_notes:
-                return (rl_tuner_ops.HOLD_INTERVAL_AFTER_THIRD_OR_FIFTH,
+                return (helpers.HOLD_INTERVAL_AFTER_THIRD_OR_FIFTH,
                     action_note, prev_note)
             else:
-                return rl_tuner_ops.HOLD_INTERVAL, action_note, prev_note
+                return helpers.HOLD_INTERVAL, action_note, prev_note
         elif action_note == NOTE_OFF:
             if prev_note in tonic_notes or prev_note in fifth_notes:
-                return (rl_tuner_ops.REST_INTERVAL_AFTER_THIRD_OR_FIFTH,
+                return (helpers.REST_INTERVAL_AFTER_THIRD_OR_FIFTH,
                     action_note, prev_note)
             else:
-                return rl_tuner_ops.REST_INTERVAL, action_note, prev_note
+                return helpers.REST_INTERVAL, action_note, prev_note
 
         interval = abs(action_note - prev_note)
 
-        if c_major and interval == rl_tuner_ops.FIFTH and (
+        if c_major and interval == helpers.FIFTH and (
             prev_note in c_notes or prev_note in g_notes):
-            return rl_tuner_ops.IN_KEY_FIFTH, action_note, prev_note
-        if c_major and interval == rl_tuner_ops.THIRD and (
+            return helpers.IN_KEY_FIFTH, action_note, prev_note
+        if c_major and interval == helpers.THIRD and (
             prev_note in c_notes or prev_note in e_notes):
-            return rl_tuner_ops.IN_KEY_THIRD, action_note, prev_note
+            return helpers.IN_KEY_THIRD, action_note, prev_note
 
         return interval, action_note, prev_note
 
@@ -1369,49 +1232,49 @@ class Tuner(object):
         reward = 0.0
 
         # rests can be good
-        if interval == rl_tuner_ops.REST_INTERVAL:
+        if interval == helpers.REST_INTERVAL:
             reward = 0.05
             tf.logging.debug('Rest interval.')
-        if interval == rl_tuner_ops.HOLD_INTERVAL:
+        if interval == helpers.HOLD_INTERVAL:
             reward = 0.075
-        if interval == rl_tuner_ops.REST_INTERVAL_AFTER_THIRD_OR_FIFTH:
+        if interval == helpers.REST_INTERVAL_AFTER_THIRD_OR_FIFTH:
             reward = 0.15
             tf.logging.debug('Rest interval after 1st or 5th.')
-        if interval == rl_tuner_ops.HOLD_INTERVAL_AFTER_THIRD_OR_FIFTH:
+        if interval == helpers.HOLD_INTERVAL_AFTER_THIRD_OR_FIFTH:
             reward = 0.3
 
         # large leaps and awkward intervals bad
-        if interval == rl_tuner_ops.SEVENTH:
+        if interval == helpers.SEVENTH:
             reward = -0.3
             tf.logging.debug('7th')
-        if interval > rl_tuner_ops.OCTAVE:
+        if interval > helpers.OCTAVE:
             reward = -1.0
             tf.logging.debug('More than octave.')
 
         # common major intervals are good
-        if interval == rl_tuner_ops.IN_KEY_FIFTH:
+        if interval == helpers.IN_KEY_FIFTH:
             reward = 0.1
             tf.logging.debug('In key 5th')
-        if interval == rl_tuner_ops.IN_KEY_THIRD:
+        if interval == helpers.IN_KEY_THIRD:
             reward = 0.15
             tf.logging.debug('In key 3rd')
 
         # smaller steps are generally preferred
-        if interval == rl_tuner_ops.THIRD:
+        if interval == helpers.THIRD:
             reward = 0.09
             tf.logging.debug('3rd')
-        if interval == rl_tuner_ops.SECOND:
+        if interval == helpers.SECOND:
             reward = 0.08
             tf.logging.debug('2nd')
-        if interval == rl_tuner_ops.FOURTH:
+        if interval == helpers.FOURTH:
             reward = 0.07
             tf.logging.debug('4th')
 
         # larger leaps not as good, especially if not in key
-        if interval == rl_tuner_ops.SIXTH:
+        if interval == helpers.SIXTH:
             reward = 0.05
             tf.logging.debug('6th')
-        if interval == rl_tuner_ops.FIFTH:
+        if interval == helpers.FIFTH:
             reward = 0.02
             tf.logging.debug('5th')
 
@@ -1497,12 +1360,12 @@ class Tuner(object):
             return 0
 
         # detect if leap
-        if interval >= rl_tuner_ops.FIFTH or interval == rl_tuner_ops.IN_KEY_FIFTH:
+        if interval >= helpers.FIFTH or interval == helpers.IN_KEY_FIFTH:
             if action_note > prev_note:
-                leap_direction = rl_tuner_ops.ASCENDING
+                leap_direction = helpers.ASCENDING
                 tf.logging.debug('Detected an ascending leap')
             else:
-                leap_direction = rl_tuner_ops.DESCENDING
+                leap_direction = helpers.DESCENDING
                 tf.logging.debug('Detected a descending leap')
 
             # there was already an unresolved leap
@@ -1512,14 +1375,14 @@ class Tuner(object):
                     tf.logging.debug('Num steps since last leap: %s',
                                     self.steps_since_last_leap)
                     if self.steps_since_last_leap > steps_between_leaps:
-                        outcome = rl_tuner_ops.LEAP_RESOLVED
+                        outcome = helpers.LEAP_RESOLVED
                         tf.logging.debug('Sufficient steps before leap resolved, '
                                         'awarding bonus')
                         self.composition_direction = 0
                         self.leapt_from = None
                 else:
                     tf.logging.debug('Detected a double leap')
-                    outcome = rl_tuner_ops.LEAP_DOUBLED
+                    outcome = helpers.LEAP_DOUBLED
 
             # the composition had no previous leaps
             else:
@@ -1538,12 +1401,12 @@ class Tuner(object):
             # If there was a leap before, check if composition has gradually returned
             # This could be changed by requiring you to only go a 5th back in the
             # opposite direction of the leap.
-            if (self.composition_direction == rl_tuner_ops.ASCENDING and
+            if (self.composition_direction == helpers.ASCENDING and
                 action_note <= self.leapt_from) or (
-                    self.composition_direction == rl_tuner_ops.DESCENDING and
+                    self.composition_direction == helpers.DESCENDING and
                     action_note >= self.leapt_from):
                 tf.logging.debug('detected a gradually resolved leap')
-                outcome = rl_tuner_ops.LEAP_RESOLVED
+                outcome = helpers.LEAP_RESOLVED
                 self.composition_direction = 0
                 self.leapt_from = None
 
@@ -1565,10 +1428,10 @@ class Tuner(object):
         """
 
         leap_outcome = self.detect_leap_up_back(action)
-        if leap_outcome == rl_tuner_ops.LEAP_RESOLVED:
+        if leap_outcome == helpers.LEAP_RESOLVED:
             tf.logging.debug('Leap resolved, awarding %s', resolving_leap_bonus)
             return resolving_leap_bonus
-        elif leap_outcome == rl_tuner_ops.LEAP_DOUBLED:
+        elif leap_outcome == helpers.LEAP_DOUBLED:
             tf.logging.debug('Leap doubled, awarding %s', leaping_twice_punishment)
             return leaping_twice_punishment
         else:
@@ -1623,19 +1486,19 @@ class Tuner(object):
         if most_probable:
             sample = np.argmax(softmax)
         else:
-            sample = rl_tuner_ops.sample_softmax(softmax)
+            sample = helpers.sample_softmax(softmax)
         generated_seq[i] = sample
-        next_obs = np.array(rl_tuner_ops.make_onehot([sample],
+        next_obs = np.array(helpers.make_onehot([sample],
                                                     self.num_actions)).flatten()
 
         tf.logging.info('Generated sequence: %s', generated_seq)
         print('Generated sequence:', generated_seq)
 
-        melody = mlib.Melody(rl_tuner_ops.decoder(generated_seq,
+        melody = mlib.Melody(helpers.decoder(generated_seq,
                                                 self.q_network.transpose_amount))
 
-        sequence = melody.to_sequence(qpm=rl_tuner_ops.DEFAULT_QPM)
-        filename = rl_tuner_ops.get_next_file_name(self.output_dir, title, 'mid')
+        sequence = melody.to_sequence(qpm=helpers.DEFAULT_QPM)
+        filename = helpers.get_next_file_name(self.output_dir, title, 'mid')
         midi_io.sequence_proto_to_midi_file(sequence, filename)
 
         tf.logging.info('Wrote a melody to %s', self.output_dir)
@@ -1653,7 +1516,7 @@ class Tuner(object):
                 plt.show()
 
     def evaluate_music_theory_metrics(self, num_compositions=10000, key=None,
-                                        tonic_note=rl_tuner_ops.C_MAJOR_TONIC):
+                                        tonic_note=60):
         """Computes statistics about music theory rule adherence.
         Args:
             num_compositions: How many compositions should be randomly generated
@@ -1664,7 +1527,7 @@ class Tuner(object):
         Returns:
             A dictionary containing the statistics.
         """
-        stat_dict = rl_tuner_eval_metrics.compute_composition_stats(
+        stat_dict = metrics.compute_composition_stats(
             self,
             num_compositions=num_compositions,
             composition_length=self.num_notes_in_melody,

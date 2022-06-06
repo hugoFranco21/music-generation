@@ -14,7 +14,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 from preprocessing import midi_to_notes, notes_to_midi
 from training import get_model
 
-model = get_model('model/note_rnn.h5', 0.001)
+model = get_model('model/note_rnn', 0.001)
 
 def predict_next_note(
     notes: np.ndarray, 
@@ -22,8 +22,7 @@ def predict_next_note(
     temperature: float = 1.0) -> int:
     """Generates a note IDs using a trained sequence model."""
 
-    assert temperature > 0
-
+    print(notes.shape)
     # Add batch dimension
     inputs = tf.expand_dims(notes, 0)
 
@@ -33,19 +32,24 @@ def predict_next_note(
     duration = predictions['duration']
 
     pitch_logits /= temperature
-    pitch = tf.random.categorical(pitch_logits, num_samples=1)
-    pitch = tf.squeeze(pitch, axis=-1)
+    soft = tf.nn.softmax(pitch_logits)
+    pitch = tf.math.argmax(soft, axis=-1)
+    probability = tf.math.reduce_max(soft)
     duration = tf.squeeze(duration, axis=-1)
     step = tf.squeeze(step, axis=-1)
 
     # `step` and `duration` values should be non-negative
     step = tf.maximum(0, step)
-    duration = tf.maximum(0, duration)
+    duration = tf.maximum(duration, 0)
 
-    return int(pitch), float(step), float(duration)
+    print(pitch)
+    print(step)
+    print(duration)
+    print(probability)
 
-temperature = 2.0
-num_predictions = 120
+    return int(pitch), float(step), float(duration), float(probability)
+
+num_predictions = 3
 
 data_dir = pathlib.Path('dataset/')
 
@@ -63,11 +67,13 @@ sample_notes = np.stack([raw_notes[key] for key in key_order], axis=1)
 input_notes = (
     sample_notes[:seq_length] / np.array([vocab_size, 1, 1]))
 
+print('input notes')
 print(input_notes)
+
 generated_notes = []
 prev_start = 0
 for _ in range(num_predictions):
-    pitch, step, duration = predict_next_note(input_notes, model, temperature)
+    pitch, step, duration, prob = predict_next_note(input_notes, model)
     start = prev_start + step
     end = start + duration
     input_note = (pitch, step, duration)
@@ -77,8 +83,14 @@ for _ in range(num_predictions):
     print(start)
     print(end)
     input_notes = np.delete(input_notes, 0, axis=0)
+    print('input_notes after delete')
+    print(input_notes)
     input_notes = np.append(input_notes, np.expand_dims(input_note, 0), axis=0)
+    print('input_notes after append')
+    print(input_notes)
     prev_start = start
+
+print(generated_notes)
 
 generated_notes = pd.DataFrame(
     generated_notes, columns=(*key_order, 'start', 'end'))

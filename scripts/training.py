@@ -132,9 +132,9 @@ def main():
 
     epochs = 30
 
-    model = get_model(learning_rate)
+    model = get_model('model/note_rnn', learning_rate)
 
-    i = 20000
+    i = 45000
     while i < 45129:
         notes, n = get_notes_from_files(filenames[i % 45129:i+10])
         i += 10
@@ -155,7 +155,7 @@ def main():
             callbacks=callbacks,
         )
 
-        model.save('model/note_rnn.h5')
+        model.save('model/note_rnn')
 
     plt.plot(history.epoch, history.history['loss'], label='total loss')
     plt.savefig('resources/loss.png')
