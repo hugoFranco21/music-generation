@@ -1,0 +1,7 @@
+Average of notes in key: 65.830129 %
+Compositions with repeated notes: 100.0 %
+Compositions that follow the eight bar rule: 2.273921 %
+Compositions that follow the twelve bar rule: 3.938131 %
+Compositions that follow the sixteen bar rule: 1.328192 %
+Average of notes with regularized duration: 50.07382 %
+Average of notes with regularized step: 61.29321 %

@@ -19,7 +19,7 @@ loss = {
 }
 
 optimizer = tf.keras.optimizers.Adam(learning_rate=0.001)
-model = keras.models.load_model('model/note_rnn.h5',compile=False)
+model = keras.models.load_model('model/note_rnn',compile=False)
 """model.compile(loss=loss,
     loss_weights={
         'pitch': 0.05,
@@ -29,4 +29,6 @@ model = keras.models.load_model('model/note_rnn.h5',compile=False)
     optimizer=optimizer,)"""
 
 print(model.get_weights())
+
+print(model.summary())
 

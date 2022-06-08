@@ -4,67 +4,61 @@ from collections import deque
 import tensorflow as tf
 import glob
 import pathlib
-from training import get_model, create_sequences
+from training import mse_with_positive_pressure
 from preprocessing import midi_to_notes, get_notes_from_files
+import helpers
+import pandas as pd
 
 import random
 
 EPISODES = 500
 TRAIN_END = 0
 REWARD_SCALER = 1.0
-BAR_LENGTH = 4
+REWARD_RNN = tf.keras.models.load_model('model/note_rnn', compile=False)
 
-FIRST = 0
-SECOND = 2
-THIRD = 4
-FOURTH = 5
-FIFTH = 7
-SIXTH = 9
-SEVENTH = 11
-EIGHTH = 12
-SCALE = [FIRST,SECOND,THIRD,FOURTH,FIFTH,SIXTH,SEVENTH,EIGHTH]
-TWELVE_FORM = [FIRST, FOURTH, FIRST ,FIRST ,FOURTH,FOURTH, FIRST,FIRST ,FIFTH,FOURTH,FIRST,FIFTH]
-EIGHT_FORM = [FIRST,FIRST,FIRST,FIRST,FOURTH,FOURTH,FIFTH,FIRST]
-SIXTEEN_FORM = [FIRST,FIRST,FIRST,FIRST,FIRST,FIRST,FIRST,FIRST,FOURTH,FOURTH,FIRST,FIRST,FIFTH,FOURTH,FIRST,FIRST]
-
-REWARD_RNN = tf.keras.load_model('model/note_rnn', compile=False)
-
-def discount_rate(): #Gamma
+def discount_rate():  # Gamma
     return 0.95
 
-def learning_rate(): #Alpha
+def learning_rate():  # Alpha
     return 0.001
 
 def batch_size():
     return 24
 
 def next_note_probabilities_rnn(
-    notes: np.ndarray, 
+    notes: np.ndarray,
     a: np.ndarray,
     keras_model: tf.keras.Model = REWARD_RNN,
-    ):
-    inputs = tf.expand_dims(notes, 0)
-    inputs = inputs[:25]
-    predictions = keras_model.predict(inputs)
-    pitch_logits = predictions['pitch']
-    
-    soft = tf.nn.softmax(pitch_logits)
+):
+    probability = 0 
+    for note in a:
+        inputs = tf.expand_dims(notes, 0)
+        predictions = keras_model.predict(inputs)
+        pitch_logits = predictions['pitch']
+        step = predictions['step']
+        duration = predictions['duration']
+        step = tf.maximum(0, step)
+        duration = tf.maximum(duration, 0)
+        soft = tf.nn.softmax(pitch_logits)
+        soft = np.squeeze(soft)
+        pitch = tf.math.argmax(soft, axis=-1)
+        probability += soft[note[0]]
+        input_note = (note[0], note[1], note[2])
+        notes = np.delete(notes, 0, axis=0)
+        notes = np.append(notes, np.expand_dims(input_note, 0), axis=0)
 
-    probability = soft[a[0]]
-
-    return float(probability)
+    return float(probability / len(a)), float(step), float(duration)
 
 def predict_next_note(
-    notes: np.ndarray, 
-    keras_model: tf.keras.Model, 
-    temperature: float = 1.0) -> int:
+        notes: np.ndarray,
+        keras_model: tf.keras.Model,
+        temperature: float = 1.0) -> int:
     """Generates a note IDs using a trained sequence model."""
 
     assert temperature > 0
 
-    print(notes.shape)
     # Add batch dimension
-    inputs = inputs[:25]
+    #print(notes.shape)
     inputs = tf.expand_dims(notes, 0)
 
     predictions = keras_model.predict(inputs)
@@ -74,9 +68,10 @@ def predict_next_note(
 
     pitch_logits /= temperature
     soft = tf.nn.softmax(pitch_logits)
-    pitch = tf.math.argmax(soft)
+    pitch = tf.math.argmax(soft, axis=-1)
     duration = tf.squeeze(duration, axis=-1)
     step = tf.squeeze(step, axis=-1)
+
 
     # `step` and `duration` values should be non-negative
     step = tf.maximum(0, step)
@@ -85,57 +80,72 @@ def predict_next_note(
     return int(pitch), float(step), float(duration)
 
 class DoubleDeepQNetwork():
-    def __init__(self, states, actions, alpha, gamma, epsilon,epsilon_min, epsilon_decay):
-        self.nS = states
-        self.nA = actions
+    def __init__(self, alpha, gamma, epsilon, epsilon_min, epsilon_decay):
         self.memory = deque([], maxlen=10000)
         self.alpha = alpha
         self.gamma = gamma
         self.composition = []
         self.beat = 0
         self.num_times_stored_called = 0
-        self.minibatch_size = 32
-        self.input = self.prime_models(self)
-        #Explore/Exploit
+        self.minibatch_size = 24
+        self.reward = 0
+        # Explore/Exploit
         self.epsilon = epsilon
         self.epsilon_min = epsilon_min
         self.epsilon_decay = epsilon_decay
-        self.model = self.build_model(self, 'model/note_rnn')
-        self.model_target = self.build_model(self, 'model/note_rnn') #Second (target) neural network
-        self.update_target_from_model() #Update weights
+        self.model = self.build_model('model/note_rnn')
+        self.model_target = self.build_model(
+            'model/note_rnn')  # Second (target) neural network
+        self.prime_models()
+        self.update_target_from_model()  # Update weights
         self.loss = []
 
     def build_model(self, path):
-        model = tf.keras.models.load_model(path,compile=False)
-        model.compile(loss=self.loss(self), #Loss function: Mean Squared Error
-                    optimizer=tf.keras.optimizers.Adam(lr=self.alpha))
+        model = tf.keras.models.load_model(path, compile=False)
+        loss = {
+            'pitch': tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
+            'step': mse_with_positive_pressure,
+            'duration': mse_with_positive_pressure,
+        }
+        model.compile(loss=loss,
+                        optimizer=tf.keras.optimizers.Adam(learning_rate=self.alpha))
         return model
 
-    def loss(self):
-        def music_rewards_loss(y_true: tf.Tensor, y_pred: tf.Tensor):
-            loss = (tf.math.log(next_note_probabilities_rnn(self.composition[-26:], y_pred))+ (1/REWARD_SCALER)*self.get_rewards(self, y_pred) + 
-                self.gamma*next_note_probabilities_rnn(self.composition[-26:], y_pred, self.model_target) - 
-                next_note_probabilities_rnn(self.composition[-26:], y_pred, self.model)) ** 2
-            return tf.reduce_mean(loss)
-        return music_rewards_loss
+    def music_rewards_loss(y_true: tf.Tensor, y_pred: tf.Tensor):
+        y_true = tf.reshape(y_true, (3, 128))
+        y_pred = tf.reshape(y_pred, (3, 128))
+        loss = (y_true - y_pred) ** 2
+        return tf.reduce_mean(loss)
+
+    def get_total_reward(self):
+        return self.reward
+
+    def get_complete_reward(self, action):
+        sum = 0.0
+        prob, _, _ = next_note_probabilities_rnn(self.input,
+                        [action])
+        sum += tf.math.log(prob)
+        sum += self.get_rewards(action)
+        return sum
 
     def get_rewards(self, action):
         reward = 0
-        reward += self.reward_key(self,action)
-        reward += self.penalize_repeating(self,action,-100.0)
-        reward_rock = self.reward_twelve_bar(self,action)
+        reward += self.reward_key(action)
+        reward += self.penalize_repeating(action, -100.0)
+        reward_rock = self.reward_twelve_bar(action)
         if reward_rock < 0:
-            reward_rock += self.reward_eight_bar(self,action,)
+            reward_rock += self.reward_eight_bar(action,)
         if reward_rock < 0:
-            reward_rock += self.reward_sixteen_bar(self,action)
+            reward_rock += self.reward_sixteen_bar(action)
         reward += reward_rock
-        reward += self.penalize_invalid_duration(self,action)
-        reward += self.penalize_invalid_step(self, action)
+        reward += self.penalize_invalid_pitch(action)
+        reward += self.penalize_invalid_duration(action)
+        reward += self.penalize_invalid_step(action)
         return reward
 
     def reward_key(self, action, amount=-1):
         reward = 10
-        if not ((action[0] - self.key) % 12) in SCALE:
+        if not ((action[0] - self.key) % 12) in helpers.SCALE:
             reward = amount
         return reward
 
@@ -144,17 +154,17 @@ class DoubleDeepQNetwork():
         for i in range(len(self.composition)-1, -1, -1):
             if self.composition[i][0] == action[0]:
                 num_repeated += 1
-        if num_repeated > 8:
+        if num_repeated > 12:
             return amount
         return 0.0
-    
-    def reward_twelve_bar(self,action,amount=15.0):
+
+    def reward_twelve_bar(self, action, amount=15.0):
         length = len(self.composition)
-        if (length > BAR_LENGTH):
-            if(length % BAR_LENGTH == 1):
-                bar = length / BAR_LENGTH
-                index = (bar - 1) % (len(TWELVE_FORM))
-                if (action[0] - self.key) == TWELVE_FORM[index]:
+        if (length > helpers.BAR_LENGTH):
+            if(length % helpers.BAR_LENGTH == 1):
+                bar = length // helpers.BAR_LENGTH
+                index = (bar - 1) % (len(helpers.TWELVE_FORM))
+                if (action[0] - self.key) == helpers.TWELVE_FORM[index]:
                     return amount
                 else:
                     return -1.0
@@ -163,26 +173,13 @@ class DoubleDeepQNetwork():
         else:
             return 0.0
 
-    def reward_eight_bar(self,action,amount=15.0):
+    def reward_eight_bar(self, action, amount=15.0):
         length = len(self.composition)
-        if (length > BAR_LENGTH):
-            if(length % BAR_LENGTH == 1):
-                bar = length / BAR_LENGTH
-                index = (bar - 1) % (len(EIGHT_FORM))
-                if (action[0] - self.key) == EIGHT_FORM[index]:
-                    return amount
-                else:
-                    return 0.0
-        else:
-            return 0.0
-
-    def reward_sixteen_bar(self,action,amount=15.0):
-        length = len(self.composition)
-        if (length > BAR_LENGTH):
-            if(length % BAR_LENGTH == 1):
-                bar = length / BAR_LENGTH
-                index = (bar - 1) % (len(SIXTEEN_FORM))
-                if (action[0] - self.key) == SIXTEEN_FORM[index]:
+        if (length > helpers.BAR_LENGTH):
+            if(length % helpers.BAR_LENGTH == 1):
+                bar = length // helpers.BAR_LENGTH
+                index = (bar - 1) % (len(helpers.EIGHT_FORM))
+                if (action[0] - self.key) == helpers.EIGHT_FORM[index]:
                     return amount
                 else:
                     return -1.0
@@ -190,6 +187,26 @@ class DoubleDeepQNetwork():
                 return 0.0
         else:
             return 0.0
+
+    def reward_sixteen_bar(self, action, amount=15.0):
+        length = len(self.composition)
+        if (length > helpers.BAR_LENGTH):
+            if(length % helpers.BAR_LENGTH == 1):
+                bar = length // helpers.BAR_LENGTH
+                index = (bar - 1) % (len(helpers.SIXTEEN_FORM))
+                if (action[0] - self.key) == helpers.SIXTEEN_FORM[index]:
+                    return amount
+                else:
+                    return -1.0
+            else:
+                return 0.0
+        else:
+            return 0.0
+
+    def penalize_invalid_pitch(self, action):
+        if action[0] < 0 or action[0] > 127:
+            return -1000.0
+        return 1.0
 
     def penalize_invalid_duration(self, action):
         if action[2] < 0.1:
@@ -213,75 +230,107 @@ class DoubleDeepQNetwork():
         data_dir = pathlib.Path('dataset/')
 
         filenames = glob.glob(str(data_dir/'*.mid*'))
-        seq_length = 26
+        seq_length = 25
         vocab_size = 128
-        file = filenames[random.randint(0, 45128)]
-        notes, n = get_notes_from_files([file])
-        seq = create_sequences(notes, seq_length, vocab_size)
-        self.key = seq[-1][0]
-        return seq[:25]
+        file = filenames[random.randint(0,500)]
+        raw_notes = midi_to_notes(file)
+        key_order = ['pitch', 'step', 'duration']
+        sample_notes = np.stack([raw_notes[key] for key in key_order], axis=1)
+        input_notes = (
+            sample_notes[:seq_length] / np.array([vocab_size, 1, 1]))
+        self.input = input_notes
+        self.key = sample_notes[0][0]
+        return input_notes
 
     def update_target_from_model(self):
-        #Update the target model from the base model
-        self.model_target.set_weights( self.model.get_weights() )
+        # Update the target model from the base model
+        self.model_target.set_weights(self.model.get_weights())
 
-    def action(self, state):
-        pitch, step, duration = predict_next_note(self.input, self.model)
-        if len(self.composition == 0):
+    def action(self, model):
+        pitch, step, duration = predict_next_note(self.input, model)
+        if len(self.composition) == 0:
             prev_start = 0
         else:
-            prev_start = self.composition[-1:][3]
+            prev_start = self.composition[-1][3]
         start = prev_start + step
         end = start + duration
+        state = self.input
         input_note = (pitch, step, duration)
         self.composition.append((*input_note, start, end))
+        self.beat += 1
         self.input = np.delete(self.input, 0, axis=0)
-        self.input = np.append(self.input, np.expand_dims(input_note, 0), axis=0)
-        return [pitch, step, duration]
+        self.input = np.append(
+            self.input, np.expand_dims(input_note, 0), axis=0)
+        action = [pitch, step, duration]
+        reward = self.get_complete_reward(action)
+        self.reward += reward
+        return state, action, reward, self.input
 
-    def store(self, observation, state, action, reward, newobservation, newstate,
-            new_reward_state):
-        #Store the experience in memory
-        self.experience.append((observation, state, action, reward,
-                            newobservation, newstate, new_reward_state))
-        self.num_times_store_called += 1
+    def reset_composition(self):
+        """Starts the models internal composition over at beat 0, with no notes.
+        Also resets statistics about whether the composition is in the middle of a
+        melodic leap.
+        """
+        self.beat = 0
+        self.reward = 0
+        self.composition = []
+
+    def store(self, state, action, reward, nstate):
+        self.memory.append( (state, action, reward, nstate) )
 
     def experience_replay(self, batch_size):
         #Execute the experience replay
-        if self.num_times_train_called % 5 == 0:
-            if len(self.composition) < self.minibatch_size:
-                return
-        minibatch = random.sample( self.memory, self.minibatch_size ) #Randomly sample from memory
-
+        minibatch = random.sample( self.memory, batch_size ) #Randomly sample from memory
         #Convert to numpy for speed by vectorization
         x = []
         y = []
         np_array = np.array(minibatch)
-        st = np.zeros((0,self.nS)) #States
-        nst = np.zeros( (0,self.nS) )#Next States
+        st = np.zeros((batch_size, len(self.input), 3)) #States
+        nst = np.zeros((batch_size, len(self.input), 3)) #Next States
         for i in range(len(np_array)): #Creating the state and next state np arrays
-            st = np.append( st, np_array[i,0], axis=0)
-            nst = np.append( nst, np_array[i,3], axis=0)
+            st = np.append( st, np.expand_dims(np_array[i][0], 0), axis=0)
+            nst = np.append( nst, np.expand_dims(np_array[i][3],0), axis=0)
         st_predict = self.model.predict(st) #Here is the speedup! I can predict on the ENTIRE batch
         nst_predict = self.model.predict(nst)
         nst_predict_target = self.model_target.predict(nst) #Predict from the TARGET
         index = 0
-        for state, action, reward, nstate, done in minibatch:
+        for state, action, reward, nstate in minibatch:
             x.append(state)
-            #Predict from state
-            nst_action_predict_target = nst_predict_target[index]
-            nst_action_predict_model = nst_predict[index]
-            if done == True: #Terminal: Just assign reward much like {* (not done) - QB[state][action]}
-                target = reward
-            else:   #Non terminal
-                target = reward + self.gamma * nst_action_predict_target[np.argmax(nst_action_predict_model)] #Using Q to get T is Double DQN
-            target_f = st_predict[index]
-            target_f[action] = target
-            y.append(target_f)
+            #Predict note from state
+            nst_action_predict_model_pitch = nst_predict['pitch'][index] # q prediction for pitch
+            nst_action_predict_model_step = nst_predict['step'][index] # q prediction for step
+            nst_action_predict_model_duration = nst_predict['duration'][index] # q prediction for duration
+            nst_action_predict_target_pitch = nst_predict['pitch'][index] # target prediction for pitch
+            nst_action_predict_target_step = nst_predict['step'][index] # target prediction for step
+            nst_action_predict_target_duration = nst_predict['duration'][index] # target prediction for duration
+            soft_model = tf.nn.softmax(nst_action_predict_model_pitch)
+            soft_model = np.squeeze(soft_model)
+            pitch_model = tf.math.argmax(soft_model, axis=-1)
+            step_model = nst_action_predict_model_step
+            duration_model = nst_action_predict_model_duration
+            prob, step, duration = next_note_probabilities_rnn(state, [[pitch_model, step_model, duration_model]], self.model_target)
+            target_pitch = reward + self.gamma * prob #Using Q to get T is Double DQN
+            target_step = reward*0.1 + self.gamma * step
+            target_duration = reward*0.1 + self.gamma * duration
+            target_f = {}
+            target_f['pitch'] = st_predict['pitch'][index]
+            target_f['step'] = st_predict['step'][index]
+            target_f['duration'] = st_predict['duration'][index] 
+            target_f['pitch'][action[0]] = target_pitch
+            target_f['step'] = target_step
+            target_f['duration'] = target_duration
+            soft_target = tf.nn.softmax(target_f['pitch'])
+            soft_target = np.squeeze(soft_target)
+            pitch_target = tf.math.argmax(soft_target, axis=-1)
+            target_ds = [pitch_target, target_f['step'], target_f['duration']]
+            y.append(target_ds)
             index += 1
         #Reshape for Keras Fit
-        x_reshape = np.array(x).reshape(batch_size,self.nS)
-        y_reshape = np.array(y)
+        x_reshape = np.array(x, dtype=np.float32).reshape((batch_size,len(self.input), 3))
+        #x_ds = np.asarray(x_reshape).astype(np.float32)
+        #y_reshape = np.array(y).reshape(batch_size, (128, 1,1), 3 )
+        #y_ds = np.asarray(y).astype(np.float32)
+        y_reshape = np.array(y, dtype=np.float32).reshape((batch_size, 3))
         epoch_count = 1
         hist = self.model.fit(x_reshape, y_reshape, epochs=epoch_count, verbose=0)
         #Graph Losses
@@ -290,3 +339,27 @@ class DoubleDeepQNetwork():
         #Decay Epsilon
         if self.epsilon > self.epsilon_min:
             self.epsilon *= self.epsilon_decay
+
+dqn = DoubleDeepQNetwork(learning_rate(), discount_rate(), 1, 0.001, 0.995 )
+
+batch_size = batch_size()
+
+for e in range(EPISODES):
+    print(f'iter {e}:')
+    dqn.reset_composition()
+    state = dqn.prime_models()
+    #print(state)
+    state = np.reshape(state, (25,3)) # Resize to store in memory to pass to .predict
+    tot_rewards = 0
+    for i in range(72): #72 is the length of a new composition we want
+        state, action, reward, nstate = dqn.action(dqn.model)
+        #nstate = np.reshape(nstate, [1, nS])
+        tot_rewards += reward
+        dqn.store(state, action, reward, nstate) # Resize to store in memory to pass to .predict
+        state = nstate
+        #Experience Replay
+        if len(dqn.memory) > batch_size:
+            dqn.experience_replay(batch_size)
+    #Update the weights after each episode (You can configure this for x steps as well
+    dqn.update_target_from_model()
+    

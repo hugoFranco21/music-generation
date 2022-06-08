@@ -18,6 +18,7 @@ def notes_to_midi(
     out_file: str, 
     instrument_name: str,
     velocity: int = 100,  # note loudness
+    dir='output/'
 )-> pretty_midi.PrettyMIDI:
     pm = pretty_midi.PrettyMIDI()
     instrument = pretty_midi.Instrument(
@@ -38,7 +39,7 @@ def notes_to_midi(
         prev_start = start
 
     pm.instruments.append(instrument)
-    pm.write('output/' + out_file)
+    pm.write(dir + out_file)
     return pm
 
 def midi_to_notes(midi_file: str, instrument_index = 0) -> pd.DataFrame:
@@ -95,4 +96,4 @@ def get_notes_from_files(files: list) -> tf.data.Dataset:
     train_notes = np.stack([all_notes[key] for key in key_order], axis=1)
 
     notes_ds = tf.data.Dataset.from_tensor_slices(train_notes)
-    return notes_ds, n_notes
+    return notes_ds, n_notes, train_notes
