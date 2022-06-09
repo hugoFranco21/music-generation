@@ -4,7 +4,7 @@ from collections import deque
 import tensorflow as tf
 import glob
 import pathlib
-from training import mse_with_positive_pressure
+from training import mse_with_positive_pressure, create_sequences
 from preprocessing import midi_to_notes, get_notes_from_files
 import helpers
 import pandas as pd
@@ -80,7 +80,7 @@ def predict_next_note(
     return int(pitch), float(step), float(duration)
 
 class DoubleDeepQNetwork():
-    def __init__(self, alpha, gamma, epsilon, epsilon_min, epsilon_decay):
+    def __init__(self, initialize_from_hd, alpha, gamma, epsilon, epsilon_min, epsilon_decay):
         self.memory = deque([], maxlen=10000)
         self.alpha = alpha
         self.gamma = gamma
@@ -89,33 +89,46 @@ class DoubleDeepQNetwork():
         self.num_times_stored_called = 0
         self.minibatch_size = 24
         self.reward = 0
+        self.epochs = 0
+        self.epochs_array = []
         # Explore/Exploit
         self.epsilon = epsilon
+            
         self.epsilon_min = epsilon_min
         self.epsilon_decay = epsilon_decay
-        self.model = self.build_model('model/note_rnn')
-        self.model_target = self.build_model(
-            'model/note_rnn')  # Second (target) neural network
+        
+        if not initialize_from_hd:
+            self.model = self.build_model('model/note_rnn')
+            self.model_target = self.build_model(
+                'model/note_rnn')  # Second (target) neural network
+        else:
+            self.model = self.build_model('model/q_net')
+            self.model_target = self.build_model(
+                'model/q_net')
         self.prime_models()
         self.update_target_from_model()  # Update weights
         self.loss = []
 
     def build_model(self, path):
+        
         model = tf.keras.models.load_model(path, compile=False)
         loss = {
-            'pitch': tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
+            'pitch': tf.keras.losses.SparseCategoricalCrossentropy(
+                from_logits=True),
             'step': mse_with_positive_pressure,
             'duration': mse_with_positive_pressure,
         }
-        model.compile(loss=loss,
-                        optimizer=tf.keras.optimizers.Adam(learning_rate=self.alpha))
-        return model
 
-    def music_rewards_loss(y_true: tf.Tensor, y_pred: tf.Tensor):
-        y_true = tf.reshape(y_true, (3, 128))
-        y_pred = tf.reshape(y_pred, (3, 128))
-        loss = (y_true - y_pred) ** 2
-        return tf.reduce_mean(loss)
+        optimizer=tf.keras.optimizers.Adam(learning_rate=self.alpha)
+
+        model.compile(loss=loss,
+                        loss_weights = {
+                            'pitch': 0.1,
+                            'step': 0.05,
+                            'duration':0.05,
+                        },
+                        optimizer=optimizer)
+        return model
 
     def get_total_reward(self):
         return self.reward
@@ -138,7 +151,6 @@ class DoubleDeepQNetwork():
         if reward_rock < 0:
             reward_rock += self.reward_sixteen_bar(action)
         reward += reward_rock
-        reward += self.penalize_invalid_pitch(action)
         reward += self.penalize_invalid_duration(action)
         reward += self.penalize_invalid_step(action)
         return reward
@@ -202,11 +214,6 @@ class DoubleDeepQNetwork():
                 return 0.0
         else:
             return 0.0
-
-    def penalize_invalid_pitch(self, action):
-        if action[0] < 0 or action[0] > 127:
-            return -1000.0
-        return 1.0
 
     def penalize_invalid_duration(self, action):
         if action[2] < 0.1:
@@ -283,7 +290,9 @@ class DoubleDeepQNetwork():
         minibatch = random.sample( self.memory, batch_size ) #Randomly sample from memory
         #Convert to numpy for speed by vectorization
         x = []
-        y = []
+        y_pitch = []
+        y_step = []
+        y_duration =[]
         np_array = np.array(minibatch)
         st = np.zeros((batch_size, len(self.input), 3)) #States
         nst = np.zeros((batch_size, len(self.input), 3)) #Next States
@@ -323,31 +332,43 @@ class DoubleDeepQNetwork():
             soft_target = np.squeeze(soft_target)
             pitch_target = tf.math.argmax(soft_target, axis=-1)
             target_ds = [pitch_target, target_f['step'], target_f['duration']]
-            y.append(target_ds)
+            y_pitch.append(pitch_target)
+            y_step.append(target_f['step'])
+            y_duration.append(target_f['duration'])
             index += 1
         #Reshape for Keras Fit
         x_reshape = np.array(x, dtype=np.float32).reshape((batch_size,len(self.input), 3))
         #x_ds = np.asarray(x_reshape).astype(np.float32)
         #y_reshape = np.array(y).reshape(batch_size, (128, 1,1), 3 )
         #y_ds = np.asarray(y).astype(np.float32)
-        y_reshape = np.array(y, dtype=np.float32).reshape((batch_size, 3))
+        y_pitch_res = np.array(y_pitch, dtype=np.float32)
+        y_step_res = np.array(y_step, dtype=np.float32)
+        y_duration_res = np.array(y_duration, dtype=np.float32)
+        #print(f'y_reshape {y_reshape.shape}')
+        #print(f'example {y_reshape[0]}')
+        #y_reshape = np.expand_dims(y_reshape,1)
+        #print(f'example {y_reshape}')
         epoch_count = 1
-        hist = self.model.fit(x_reshape, y_reshape, epochs=epoch_count, verbose=0)
+        hist = self.model.fit(x_reshape, {'pitch': y_pitch_res, 'step': y_step_res, 'duration': y_duration_res}, epochs=epoch_count, verbose=1)
         #Graph Losses
         for i in range(epoch_count):
             self.loss.append( hist.history['loss'][i] )
+        self.epochs += 1
+        self.epochs_array.append(self.epochs)
         #Decay Epsilon
         if self.epsilon > self.epsilon_min:
             self.epsilon *= self.epsilon_decay
 
-dqn = DoubleDeepQNetwork(learning_rate(), discount_rate(), 1, 0.001, 0.995 )
-
+dqn = DoubleDeepQNetwork(False, learning_rate(), discount_rate(), 1, 0.001, 0.995 )
+print(dqn.model.summary())
 batch_size = batch_size()
 
 for e in range(EPISODES):
     print(f'iter {e}:')
     dqn.reset_composition()
     state = dqn.prime_models()
+    if len(state) < 25:
+        continue
     #print(state)
     state = np.reshape(state, (25,3)) # Resize to store in memory to pass to .predict
     tot_rewards = 0
@@ -358,8 +379,14 @@ for e in range(EPISODES):
         dqn.store(state, action, reward, nstate) # Resize to store in memory to pass to .predict
         state = nstate
         #Experience Replay
-        if len(dqn.memory) > batch_size:
+        if len(dqn.memory) > 0 and len(dqn.memory) % batch_size == 0:
             dqn.experience_replay(batch_size)
     #Update the weights after each episode (You can configure this for x steps as well
     dqn.update_target_from_model()
+
+    plt.plot(dqn.epochs_array, dqn.loss, label='total loss')
+    plt.savefig('resources/rl_loss.png')
+    dqn.model.save('model/tuner')
+
+
     

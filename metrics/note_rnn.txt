@@ -1,8 +1,99 @@
-Average of notes in key: 60.640625 %
+Average of notes in key: 64.01515151515152 %
 Compositions with repeated notes: 100.0 %
 Compositions that follow the eight bar rule: 0.0 %
 Compositions that follow the twelve bar rule: 0.0 %
 Compositions that follow the sixteen bar rule: 0.0 %
-Average of notes with regularized duration: 13.03125 %
-Average of notes with regularized step: 2.65625 %
+Average of notes with invalid pitch: 0.0 %
+Average of notes with invalid duration: 87.01073232323232 %
+Average of notes with invalid step: 97.19065656565657 %
+
+Average of notes in key: 64.35596446700508 %
+Compositions with repeated notes: 100.0 %
+Compositions that follow the eight bar rule: 0.0 %
+Compositions that follow the twelve bar rule: 0.0 %
+Compositions that follow the sixteen bar rule: 0.0 %
+Average of notes with invalid pitch: 0.0 %
+Average of notes with invalid duration: 87.12722081218274 %
+Average of notes with invalid step: 97.32709390862944 %
+
+Average of notes in key: 64.8989898989899 %
+Compositions with repeated notes: 100.0 %
+Compositions that follow the eight bar rule: 0.0 %
+Compositions that follow the twelve bar rule: 0.0 %
+Compositions that follow the sixteen bar rule: 0.0 %
+Average of notes with invalid pitch: 0.0 %
+Average of notes with invalid duration: 87.23169191919192 %
+Average of notes with invalid step: 97.3800505050505 %
+
+Average of notes in key: 70.46875 %
+Compositions with repeated notes: 100.0 %
+Compositions that follow the eight bar rule: 0.0 %
+Compositions that follow the twelve bar rule: 0.0 %
+Compositions that follow the sixteen bar rule: 0.0 %
+Average of notes with invalid duration: 86.5625 %
+Average of notes with invalid step: 97.34375 %
+
+Average of notes in key: 65.54276315789474 %
+Compositions with repeated notes: 100.0 %
+Compositions that follow the eight bar rule: 0.0 %
+Compositions that follow the twelve bar rule: 0.7017543859649122 %
+Compositions that follow the sixteen bar rule: 0.0 %
+Average of notes with invalid duration: 86.8421052631579 %
+Average of notes with invalid step: 97.36842105263158 %
+
+Average of notes in key: 63.181089743589745 %
+Compositions with repeated notes: 100.0 %
+Compositions that follow the eight bar rule: 0.0 %
+Compositions that follow the twelve bar rule: 0.5128205128205128 %
+Compositions that follow the sixteen bar rule: 0.0 %
+Average of notes with invalid duration: 86.45833333333334 %
+Average of notes with invalid step: 97.51602564102564 %
+
+Average of notes in key: 62.122844827586206 %
+Compositions with repeated notes: 100.0 %
+Compositions that follow the eight bar rule: 0.0 %
+Compositions that follow the twelve bar rule: 0.45977011494252873 %
+Compositions that follow the sixteen bar rule: 0.0 %
+Average of notes with invalid duration: 86.61099137931035 %
+Average of notes with invalid step: 97.41379310344827 %
+
+Average of notes in key: 61.769480519480524 %
+Compositions with repeated notes: 100.0 %
+Compositions that follow the eight bar rule: 0.0 %
+Compositions that follow the twelve bar rule: 0.432900432900433 %
+Compositions that follow the sixteen bar rule: 0.0 %
+Average of notes with invalid duration: 86.68831168831169 %
+Average of notes with invalid step: 97.46347402597402 %
+
+Average of notes in key: 60.221354166666664 %
+Compositions with repeated notes: 100.0 %
+Compositions that follow the eight bar rule: 0.0 %
+Compositions that follow the twelve bar rule: 0.4166666666666667 %
+Compositions that follow the sixteen bar rule: 0.0 %
+Average of notes with invalid duration: 86.75130208333334 %
+Average of notes with invalid step: 97.47721354166666 %
+
+Average of notes in key: 58.87661637931034 %
+Compositions with repeated notes: 100.0 %
+Compositions that follow the eight bar rule: 0.0 %
+Compositions that follow the twelve bar rule: 0.3448275862068966 %
+Compositions that follow the sixteen bar rule: 0.0 %
+Average of notes with invalid duration: 86.86691810344827 %
+Average of notes with invalid step: 97.44073275862068 %
+
+Average of notes in key: 58.892463235294116 %
+Compositions with repeated notes: 100.0 %
+Compositions that follow the eight bar rule: 0.0 %
+Compositions that follow the twelve bar rule: 0.3431372549019608 %
+Compositions that follow the sixteen bar rule: 0.0 %
+Average of notes with invalid duration: 86.73023897058823 %
+Average of notes with invalid step: 97.38051470588235 %
+
+Average of notes in key: 58.673878205128204 %
+Compositions with repeated notes: 100.0 %
+Compositions that follow the eight bar rule: 0.0 %
+Compositions that follow the twelve bar rule: 0.2991452991452992 %
+Compositions that follow the sixteen bar rule: 0.0 %
+Average of notes with invalid duration: 86.61858974358975 %
+Average of notes with invalid step: 97.40584935897436 %
 

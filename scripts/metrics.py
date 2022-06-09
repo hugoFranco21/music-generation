@@ -11,15 +11,14 @@ from training import get_model
 from generation import predict_next_note
 import helpers
 
-model = get_model('model/note_rnn', 0.001)
+model = get_model('model/tuner', 0.001)
 
-def predict_next_note(
+def  predict_next_note (
     notes: np.ndarray, 
     keras_model: tf.keras.Model, 
     temperature: float = 1.0) -> int:
     """Generates a note IDs using a trained sequence model."""
 
-    print(notes.shape)
     # Add batch dimension
     inputs = tf.expand_dims(notes, 0)
 
@@ -35,6 +34,7 @@ def predict_next_note(
     step = tf.squeeze(step, axis=-1)
 
     # `step` and `duration` values should be non-negative
+    pitch = tf.minimum(pitch, 127)
     pitch = tf.maximum(0,pitch)
     step = tf.maximum(0, step)
     duration = tf.maximum(duration, 0)
@@ -46,6 +46,7 @@ repeating = []
 twelve_bar = []
 eight_bar = []
 sixteen_bar = []
+pitch = []
 duration = []
 step = []
 
@@ -78,7 +79,7 @@ def evaluate_repeating(df: pd.DataFrame):
     arr = np.zeros(128)
     for i in range(0, len(df)):
         arr[int(df.iloc[i]['pitch'])] += 1
-    return 1.0 if arr[np.argmax(arr)] >= 8 else 0.0
+    return 1.0 if arr[np.argmax(arr)] >= 12 else 0.0
 
 def evaluate_twelve_bar(df: pd.DataFrame, key):
     i = 1
@@ -87,9 +88,10 @@ def evaluate_twelve_bar(df: pd.DataFrame, key):
         if i < helpers.BAR_LENGTH:
             i += 1
             continue
+        i += 1
         if(i % helpers.BAR_LENGTH == 1):
-            bar = i / helpers.BAR_LENGTH
-            index = (bar - 1) % (len(helpers.TWELVE_FORM))
+            bar = i // helpers.BAR_LENGTH
+            index = (bar) % (len(helpers.TWELVE_FORM))
             if (df.iloc[j]['pitch'] - key) == helpers.TWELVE_FORM[index]:
                 count += 1.0/15.0
     return count
@@ -101,8 +103,9 @@ def evaluate_eigth_bar(df: pd.DataFrame, key):
         if i < helpers.BAR_LENGTH:
             i += 1
             continue
+        i += 1
         if(i % helpers.BAR_LENGTH == 1):
-            bar = i / helpers.BAR_LENGTH
+            bar = i // helpers.BAR_LENGTH
             index = (bar - 1) % (len(helpers.EIGHT_FORM))
             if (df.iloc[j]['pitch'] - key) == helpers.EIGHT_FORM[index]:
                 count += 1.0/15.0
@@ -115,8 +118,9 @@ def evaluate_sixteen_bar(df: pd.DataFrame, key):
         if i < helpers.BAR_LENGTH:
             i += 1
             continue
+        i += 1
         if(i % helpers.BAR_LENGTH == 1):
-            bar = i / helpers.BAR_LENGTH
+            bar = i // helpers.BAR_LENGTH
             index = (bar - 1) % (len(helpers.SIXTEEN_FORM))
             if (df.iloc[j]['pitch'] - key) == helpers.SIXTEEN_FORM[index]:
                 count += 1.0/15.0
@@ -125,14 +129,14 @@ def evaluate_sixteen_bar(df: pd.DataFrame, key):
 def evaluate_invalid_duration(df: pd.DataFrame):
     count = 0
     for j in range(0, len(df)):
-        if (df.iloc[j]['duration'] >= 0.1 and df.iloc[j]['duration'] <= 3.5):
+        if (df.iloc[j]['duration'] <= 0.1 or df.iloc[j]['duration'] >= 3.5):
             count += 1
     return float(count/len(df.index))
 
 def evaluate_invalid_step(df: pd.DataFrame):
     count = 0
     for j in range(0, len(df)):
-        if (df.iloc[j]['step'] >= 0.1 and df.iloc[j]['step'] <= 2.5):
+        if (df.iloc[j]['step'] <= 0.1 or df.iloc[j]['step'] >= 2.5):
             count += 1
     return float(count/len(df.index))
 
@@ -141,7 +145,7 @@ def write_to_file(f,
             repeating_avg, 
             twelve_bar_avg, 
             eight_bar_avg, 
-            sixteen_bar_avg, 
+            sixteen_bar_avg,
             duration_avg, 
             step_avg):
     f.write("Average of notes in key: " + str(key_avg * 100) + " %\n")
@@ -149,8 +153,8 @@ def write_to_file(f,
     f.write("Compositions that follow the eight bar rule: " + str(eight_bar_avg * 100) + " %\n")
     f.write("Compositions that follow the twelve bar rule: " + str(twelve_bar_avg * 100) + " %\n")
     f.write("Compositions that follow the sixteen bar rule: " + str(sixteen_bar_avg * 100) + " %\n")
-    f.write("Average of notes with regularized duration: " + str(duration_avg * 100) + " %\n")
-    f.write("Average of notes with regularized step: " + str(step_avg * 100) + " %\n\n")
+    f.write("Average of notes with invalid duration: " + str(duration_avg * 100) + " %\n")
+    f.write("Average of notes with invalid step: " + str(step_avg * 100) + " %\n\n")
 
 
 num_predictions = 1000
@@ -163,9 +167,9 @@ def evaluate_model():
     seq_length = 25
     vocab_size = 128
     i = 0
-    sem = random.randint(0, 44128)
+    sem = random.randint(1000, 3000)
     filenames = filenames[sem:sem+1000]
-    f = open("metrics/note_rnn.txt", "w")
+    f = open("metrics/rl_rnn.txt", "a")
     while i < num_predictions:
         file = filenames[i]
         i += 1        
@@ -179,6 +183,8 @@ def evaluate_model():
             sample_notes[:seq_length] / np.array([vocab_size, 1, 1]))
 
         #print(input_notes)
+        if len(input_notes) < 25:
+            continue
 
         generated_notes = []
         composition_size = 64
@@ -190,7 +196,7 @@ def evaluate_model():
                 key = pitch
             start = prev_start + step
             end = start + duration
-            input_note = (pitch % 128, step, duration)
+            input_note = (pitch, step, duration)
             generated_notes.append((*input_note, start, end))
             input_notes = np.delete(input_notes, 0, axis=0)
             input_notes = np.append(input_notes, np.expand_dims(input_note, 0), axis=0)
@@ -201,12 +207,12 @@ def evaluate_model():
         
         evaluate_composition(generated_notes, key)
         
-        if i % 100 == 0:
+        if i % 20 == 0:
             key_avg, repeating_avg, twelve_bar_avg, eight_bar_avg, sixteen_bar_avg, duration_avg, step_avg  = get_averages()
             write_to_file(f, key_avg, repeating_avg, twelve_bar_avg, eight_bar_avg, sixteen_bar_avg, duration_avg, step_avg)
 
-        if i % 100 == 0:
-            out_file = f'output_{i}.midi'
+        if i % 75 == 0:
+            out_file = f'output_{i}_rl.midi'
             out_pm = notes_to_midi(
                 generated_notes, out_file=out_file, instrument_name='Electric Guitar (Clean)')
     f.close()
