@@ -1,2 +1,3 @@
-# music-generation
-Code to generate music
+# Rock Music Generation Using Recurrent Neural Networks and Reinforcement Learning
+
+
